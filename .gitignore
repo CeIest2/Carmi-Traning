@@ -6,6 +6,19 @@ __pycache__/
 # C extensions
 *.so
 
+fineweb10B/
+pylog124M/
+__pycache__/
+logs/
+exports/
+.DS_Store
+/venv/
+finieweb*
+/venv*
+.hf_cache
+*.npz
+
+
 # Distribution / packaging
 .Python
 build/
