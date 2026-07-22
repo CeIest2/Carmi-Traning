@@ -19,8 +19,8 @@ class Hyperparameters:
     val_tokens: int = 10485760 
     val_batch_size: int = 1 * 32 * 1024 * 8
     # schedule
-    num_scheduled_iterations: int = 13800  # number of steps to complete lr and ws schedule
-    num_extension_iterations: int = 10  # number of steps to continue training at final lr and ws
+    num_scheduled_iterations: int = 1380  # number of steps to complete lr and ws schedule
+    num_extension_iterations: int = 10000  # number of steps to continue training at final lr and ws
     # evaluation and logging
     run_id: str = f"{uuid.uuid4()}"
     # Descriptive run_id for this iteration:

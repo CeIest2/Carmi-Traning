@@ -1,23 +1,10 @@
-"""Micro-benchmarks etendus pour l'adaptation RTX 4060 Ti (sm_89).
-
-Sections :
-0) bande passante DRAM effective (copie)
-1) head GEMM bf16 vs fp8 _scaled_mm (6144x768x50304)
-2) MLP : eager vs kernel fusionne (lrs_fwd/lrs_bwd), bf16 vs fp8, sweep de configs
-3) CE : kernel seul, chemin autograd complet fwd+bwd, pic VRAM en fonction de T
-4) transposes fp8 du backward CE + grad_w fp8 vs bf16
-5) Muon/Polar Express : XXT, XTX, ba_plus_cAA
-6) attention : FA2 varlen vs SDPA (flash/cudnn) vs FlexAttention (sliding window)
-7) validation numerique contre references fp32
-
-Usage : venv/bin/python bench_kernels.py
-"""
+"""Micro-benchmarks etendus pour l'adaptation RTX 4060 Ti (sm_89)."""
 import torch
 import triton
 import torch.nn.functional as F
 
-import triton_kernels
-from triton_kernels import (ce_fwd_bwd, transpose_copy, XXT, XTX, ba_plus_cAA,
+import v1.triton_kernels as triton_kernels
+from v1.triton_kernels import (ce_fwd_bwd, transpose_copy, XXT, XTX, ba_plus_cAA,
                             FusedSoftcappedCrossEntropy, FusedLinearReLUSquareFunction)
 
 props = torch.cuda.get_device_properties(0)
@@ -131,7 +118,6 @@ def fused_mlp_with_quant():
 ms = bench(fused_mlp_with_quant)
 print(f"[mlp] lrs_fwd fp8+quant : {ms:.3f} ms (casts inclus)")
 
-# step complet fwd+bwd via l'autograd Function (chemin de production)
 x3d = x.view(1, T, D).requires_grad_(True)
 w1g = w1.clone().requires_grad_(True)
 w2g = w2.clone().requires_grad_(True)
@@ -153,7 +139,7 @@ print(f"[mlp] step fusionne fwd+bwd : {ms:.3f} ms (autograd Function)")
 ms = bench(eager_step)
 print(f"[mlp] step eager    fwd+bwd : {ms:.3f} ms (compile)")
 
-# -- 2c) sweep de configs LRS (recompile a chaque combo, warmup inclus) --
+# -- 2c) sweep de configs LRS --
 print("\n[mlp] sweep configs lrs (BM, BN, st_fwd, st_bwd, warps)")
 for bm_, bn_, sf, sb, wp in [(64, 128, 4, 3, 8), (64, 128, 3, 3, 8),
                              (128, 128, 3, 3, 8), (128, 64, 3, 3, 8)]:
@@ -167,7 +153,7 @@ for bm_, bn_, sf, sb, wp in [(64, 128, 4, 3, 8), (64, 128, 3, 3, 8),
         print(f"  {bm_:>3}x{bn_:<3} st{sf}/{sb} w{wp} : fwd {msf:.3f} ms | bwd {msb:.3f} ms")
     except Exception as e:
         print(f"  {bm_:>3}x{bn_:<3} st{sf}/{sb} w{wp} : ECHEC ({type(e).__name__})")
-# restaure la config recommandee
+
 triton_kernels.LRS_BM, triton_kernels.LRS_BN = 64, 128
 triton_kernels.LRS_STAGES_FWD, triton_kernels.LRS_STAGES_BWD, triton_kernels.LRS_WARPS = 4, 3, 8
 
@@ -187,9 +173,9 @@ mtp3 = torch.tensor([1.0, 0.5, 0.25], device="cuda")
 ms = bench(lambda: ce_fwd_bwd(logits, targets, mtp3, losses, grad_input, T, 3, 23.0, 5.0, 7.5, 1.0, 1.0))
 print(f"[ce] fwd_bwd mtp=3 : {ms:.3f} ms")
 
-# -- 3b) chemin autograd complet (scaled_mm + kernel + transposes + grad_w) --
-# NB : on passe les 11 arguments explicitement pour matcher le backward (11 retours)
-lm_head_w = (torch.randn(V, D, device="cuda", dtype=torch.bfloat16) * 0.02).requires_grad_(True)
+# -- 3b) chemin autograd complet --
+# CORRECTION D'DIMENSIONS ICI : (D, V)
+lm_head_w = (torch.randn(D, V, device="cuda", dtype=torch.bfloat16) * 0.02).requires_grad_(True)
 xh = x.clone().requires_grad_(True)
 ones = torch.ones(T, device="cuda")
 
@@ -249,7 +235,7 @@ print(f"[muon] XTX  (3072x768 -> 768^2): {ms:.3f} ms")
 ms = bench(lambda: ba_plus_cAA(g_sq, 1.0, 0.5, out_sq))
 print(f"[muon] ba_plus_cAA (768x768)   : {ms:.3f} ms")
 
-# ---- 6) Attention : FA2 varlen vs SDPA vs FlexAttention ----
+# ---- 6) Attention ----
 print("\n[attn] duel des backends (adaptez S/NH/DH/WINDOW a votre config)")
 S, NH, DH, WINDOW = 1024, 12, 64, 512
 B = max(1, T // S)
@@ -263,7 +249,6 @@ def attn_tflops(ms, win):
     return 4 * B * NH * S * eff * DH / ms / 1e9
 
 
-# 6a) FA2 varlen (chemin de production)
 try:
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
     qv = q.transpose(1, 2).reshape(B * S, NH, DH).contiguous()
@@ -276,7 +261,6 @@ try:
 except Exception as e:
     print(f"  FA2 varlen indisponible : {type(e).__name__}: {str(e)[:80]}")
 
-# 6b) SDPA flash / cudnn (padde, causal plein -> plus de FLOPs que la fenetre)
 try:
     from torch.nn.attention import sdpa_kernel, SDPBackend
     for name, be in [("flash", SDPBackend.FLASH_ATTENTION), ("cudnn", SDPBackend.CUDNN_ATTENTION)]:
@@ -289,7 +273,6 @@ try:
 except ImportError:
     print("  sdpa_kernel indisponible sur cette version de torch")
 
-# 6c) FlexAttention avec sliding window + causal (remplace potentiellement le varlen)
 try:
     from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 
@@ -303,7 +286,7 @@ try:
 except Exception as e:
     print(f"  FlexAttention indisponible : {type(e).__name__}: {str(e)[:80]}")
 
-# ---- 7) Validation numerique (references fp32) ----
+# ---- 7) Validation numerique ----
 print("\n[check] validation numerique (err relative L2, bf16 ~1e-2, fp8 grad ~quelques %)")
 torch.manual_seed(0)
 xs = torch.randn(2048, D, device="cuda", dtype=torch.bfloat16)
