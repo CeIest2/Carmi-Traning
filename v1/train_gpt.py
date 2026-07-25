@@ -13,11 +13,11 @@ import copy
 import gc
 import time
 
-from v1.dist_setup import grad_accum_steps, grad_scale, master_process, world_size
-from v1.config import TRAINING_STAGES, args, training_schedule
-from v1.data import distributed_data_generator, get_bigram_hash
-from v1.model import GPT
-from v1.training import TrainingManager
+from dist_setup import grad_accum_steps, grad_scale, master_process, world_size
+from config import TRAINING_STAGES, args, training_schedule
+from data import distributed_data_generator, get_bigram_hash
+from model import GPT
+from training import TrainingManager
 
 import torch
 import triton
@@ -256,6 +256,21 @@ def main():
             loss = model(inputs, targets, cum_seqlens, bigram_inputs, training_manager.get_forward_args()).sum() * grad_scale
             training_manager.sparse_index_share(step)
             loss.backward()
+
+
+            if step % 10 == 0:
+                total_norm = 0.0
+                for p in model.parameters():
+                    if p.grad is not None:
+                        total_norm += p.grad.norm().item() ** 2
+                print0(f"step {step} grad_norm: {total_norm**0.5:.2f}")
+                
+                # Logger les lambdas critiques
+                print0(f"resid_lambdas max: {model.resid_lambdas.max().item():.3f}")
+                print0(f"post_lambdas: {model.post_lambdas.data}")  
+
+
+
             del loss
         training_manager.step_optimizers(step)
         model.quantize_mlp_fp8()

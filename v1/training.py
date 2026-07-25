@@ -27,23 +27,23 @@ class TrainingManager():
         # - "sharded" parameters use reduce_scatter/all_gather and "replicated" ones use all_reduce
         # - lr_mul and wd_mul are per-parameter learning rate and weight decay multipliers
         self.param_table = {
-            "qk_bank":        {"optim": "normuon", "comms": "sharded",    "adam_betas": None},
-            "vo_bank":        {"optim": "normuon", "comms": "sharded",    "adam_betas": None},
-            "mlp_bank":       {"optim": "normuon", "comms": "sharded",    "adam_betas": None},
-            "scalars":        {"optim": "adam",    "comms": "replicated", "adam_betas": [0.9,  0.99], "lr_mul": 5.0,  "wd_mul": 0.0},
-            "smear_gate":     {"optim": "adam",    "comms": "replicated", "adam_betas": [0.9,  0.99], "lr_mul": 0.01, "wd_mul": 0.0},
-            "skip_gate":      {"optim": "adam",    "comms": "replicated", "adam_betas": [0.9,  0.99], "lr_mul": 0.05, "wd_mul": 0.0},
-            "attn_gate_bank": {"optim": "adam",    "comms": "replicated", "adam_betas": [0.9,  0.99]},
-            "ve_gate_bank":   {"optim": "adam",    "comms": "replicated", "adam_betas": [0.9,  0.99]},
-            "lm_head":        {"optim": "adam",    "comms": "sharded",    "adam_betas": [0.5,  0.95], "wd_mul": 150.},
-            "bigram_embed":   {"optim": "adam",    "comms": "sharded_sparse", "adam_betas": [0.75, 0.95], "lr_mul": 75.,  "wd_mul": 5.0},
+            "qk_bank":        {"optim": "normuon", "comms": "sharded",        "adam_betas": None},
+            "vo_bank":        {"optim": "normuon", "comms": "sharded",        "adam_betas": None},
+            "mlp_bank":       {"optim": "normuon", "comms": "sharded",        "adam_betas": None},
+            "scalars":        {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.99], "lr_mul": 5.0,  "wd_mul": 0.0},
+            "smear_gate":     {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.99], "lr_mul": 0.01, "wd_mul": 0.0},
+            "skip_gate":      {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.99], "lr_mul": 0.05, "wd_mul": 0.0},
+            "attn_gate_bank": {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.99]},
+            "ve_gate_bank":   {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.99]},
+            "lm_head":        {"optim": "adam",    "comms": "sharded",        "adam_betas": [0.5,  0.95], "wd_mul": 30.},
+            "bigram_embed":  {"optim": "adam",    "comms": "sharded_sparse", "adam_betas": [0.75, 0.95], "lr_mul": 25.,  "wd_mul": 5.0},
             "post_lambdas":   {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.95], "lr_mul": 1.0,  "wd_mul": 0.0},
             "x0_lambdas":     {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.95], "lr_mul": 1.0,  "wd_mul": 0.0},
             "bigram_lambdas": {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.95], "lr_mul": 1.0,  "wd_mul": 0.0},
             "resid_lambdas":  {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.95], "lr_mul": 5.0,  "wd_mul": 0.0},
             "xsa_alphas":     {"optim": "adam",    "comms": "replicated",     "adam_betas": [0.9,  0.95], "lr_mul": 1.0,  "wd_mul": 0.0},
-            "value_embeds":   {"optim": "adam",    "comms": "sharded",    "adam_betas": [0.75, 0.95], "lr_mul": 75.,  "wd_mul": 5.0},
-            "embed":          {"optim": "adam",    "comms": "sharded",    "adam_betas": [0.5,  0.95], "wd_mul": 150.},
+            "value_embeds":   {"optim": "adam",    "comms": "sharded",        "adam_betas": [0.75, 0.95], "lr_mul": 25.,  "wd_mul": 5.0},
+            "embed":          {"optim": "adam",    "comms": "sharded",        "adam_betas": [0.5,  0.95], "wd_mul": 30.},
         }
 
         # ---- MUDD parameter overrides ----
@@ -67,16 +67,16 @@ class TrainingManager():
         ]
 
         adam_defaults = dict(
-            lr=0.008,
-            eps=1e-10,
+            lr=0.003,
+            eps=1e-8,
             weight_decay=0.005,
         )
 
         normuon_defaults = dict(
-            lr=0.023,
+            lr=0.012,
             momentum=0.95,
             beta2=0.9,
-            weight_decay=1.2,
+            weight_decay=0.6,
         )
 
         self.optimizer = NorMuonAndAdam(

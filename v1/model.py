@@ -11,6 +11,7 @@ import torch._dynamo as dynamo
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
+from triton_kernels import FusedSoftcappedCrossEntropy
 
 import fp8  # enregistre les custom ops nanogpt::mm_t (utilisés via torch.ops.nanogpt.mm_t)
 
@@ -23,18 +24,6 @@ import fp8  # enregistre les custom ops nanogpt::mm_t (utilisés via torch.ops.n
 # (mêmes arguments cu_seqlens_q/k, max_seqlen_q/k, causal, softmax_scale, window_size).
 from flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from triton_kernels import FusedLinearReLUSquareFunction, FusedSoftcappedCrossEntropy
-# Fused triton kernel: relu(x @ W1.T)^2 @ W2.T
-# https://arxiv.org/abs/2109.08668v2; ~1-2% better than GELU; suggested by @SKYLINEZ007 and @Grad62304977
-# PATCH (RTX 4060 Ti / Ada Lovelace) : FusedLinearReLUSquareFunction s'appuie sur des
-# TensorDescriptor Triton (TMA), une fonctionnalité matérielle exclusive à Hopper/Blackwell.
-# Sous torch.compile(fullgraph=True) ça casse au traçage (et même patché pour tracer,
-# l'exécution réelle nécessiterait du vrai matériel TMA absent sur Ada). On bascule donc
-# sur l'équivalent mathématique en PyTorch pur : matmul/relu/carré/matmul, entièrement
-# différentiable via l'autograd standard (donc backward identique, pas besoin de le
-# réécrire à la main) et 100% traçable par Dynamo en fullgraph. torch.compile/Inductor
-# fusionne de toute façon les opérations élément-par-élément en un kernel Triton généré
-# automatiquement, donc la perte de perf reste limitée.
 def ReLUSqrdMLP(x, *mlp_args):
     w1, w2 = mlp_args[0], mlp_args[1]
     
@@ -281,6 +270,7 @@ class GPT(nn.Module):
         self.vocab_size = next_multiple_of_n(vocab_size, n=128)
 
         # Transposed weight storage for faster gradient accumulation
+        DISABLE_FP8 = False
         use_fp8 = not os.environ.get("DISABLE_FP8", False)
         self.lm_head = CastedLinearT(model_dim, self.vocab_size, use_fp8=use_fp8, x_s=100/448, w_s=1.6/448, grad_s=grad_scale * 0.75/448)
         nn.init.normal_(self.lm_head.weight, mean=0, std=0.005)
@@ -295,6 +285,7 @@ class GPT(nn.Module):
         self.init_misc(model_dim, num_layers)
         self.init_mudd(num_layers, model_dim)
 
+        # Auto-label parameters
         # Auto-label parameters
         for name, param in self.named_parameters():
             param.label = name.replace('.weight', '')
@@ -474,7 +465,7 @@ class GPT(nn.Module):
         bm_sizes = [ws_short, ws_short, ws_short, ws_long, ws_short, ws_short, None, ws_short, ws_short, ws_short, ws_long]
         assert len(bm_sizes) == self.num_layers
         key_offset = [b==ws_long for b in bm_sizes] # apply partial key offset to long windows
-
+        DISABLE_FP8 = False
         use_mlp_fp8 = self.training and not os.environ.get("DISABLE_FP8", False)
         if use_mlp_fp8:
             mlp_up_proj_f8 = self._mlp_up_proj_f8.unbind(0)
@@ -484,8 +475,10 @@ class GPT(nn.Module):
         sa_lambdas = self.scalars[: 2 * self.num_layers].clone().view(-1, 2)
         smear_lambda = self.scalars[2 * self.num_layers]
         skip_lambda = self.scalars[2 * self.num_layers + 1]
-        resid_lambdas_attn = self.resid_lambdas[:, 0].bfloat16().unbind(0)
-        resid_lambdas_mlp  = self.resid_lambdas[:, 1].bfloat16().unbind(0)
+        _resid_attn = self.resid_lambdas[:, 0].clamp(0.9, 1.05)
+        _resid_mlp  = self.resid_lambdas[:, 1].clamp(0.9, 1.05)
+        resid_lambdas_attn = _resid_attn.bfloat16().unbind(0)
+        resid_lambdas_mlp  = _resid_mlp.bfloat16().unbind(0)
         post_lambdas_attn = self.post_lambdas[:, 0].bfloat16().unbind(0)
         post_lambdas_mlp  = self.post_lambdas[:, 1].bfloat16().unbind(0)
         x0_lambdas = self.x0_lambdas.bfloat16().unbind(0)

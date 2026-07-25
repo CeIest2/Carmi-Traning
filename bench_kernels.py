@@ -125,6 +125,7 @@ g3d = g_out.view(1, T, D)
 
 
 def fused_step():
+    pass
     out = FusedLinearReLUSquareFunction.apply(x3d, w1g, w2g)
     out.backward(g3d)
 

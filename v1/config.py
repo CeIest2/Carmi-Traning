@@ -17,7 +17,7 @@ class Hyperparameters:
     train_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_train_*.bin") # input .bin to train on
     val_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_val_*.bin") # input .bin to eval validation loss on
     val_tokens: int = 10485760 
-    val_batch_size: int = 1 * 32 * 1024 * 8
+    val_batch_size: int = 32768
     # schedule
     num_scheduled_iterations: int = 1380  # number of steps to complete lr and ws schedule
     num_extension_iterations: int = 10000  # number of steps to continue training at final lr and ws
