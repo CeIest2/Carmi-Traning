@@ -13,16 +13,19 @@ import copy
 import gc
 import time
 
-from dist_setup import grad_accum_steps, grad_scale, master_process, world_size
-from config import TRAINING_STAGES, args, training_schedule
-from data import distributed_data_generator, get_bigram_hash
-from model import GPT
-from training import TrainingManager
+from v1.dist_setup import grad_accum_steps, grad_scale, master_process, world_size
+from v1.config import TRAINING_STAGES, args, training_schedule
+from v1.data import distributed_data_generator, get_bigram_hash
+from v1.model import GPT
+from v1.training import TrainingManager
 
 import torch
 import triton
 import torch.distributed as dist
 from torch import nn
+
+import torch._inductor.config as inductor_config
+inductor_config.triton.cudagraphs = False
 
 # -----------------------------------------------------------------------------
 # int main
@@ -48,17 +51,16 @@ def main():
         os.makedirs("logs", exist_ok=True)
         logfile = f"logs/{run_id}.txt"
         print(logfile)
-    # begin by printing the code of all the modules in this directory
+        
     print0(code)
     print0("="*100)
-    # log information about the hardware/software environment this is running on
     print0(f"Running Python {sys.version}")
     print0(f"Running PyTorch {torch.version.__version__} compiled for CUDA {torch.version.cuda}")
     print0(f"Running Triton version {triton.__version__}")
-
     print0(nvidia_smi())
     print0("="*100)
 
+    # 1. Initialisation du modèle (world_size = 1)
     model: nn.Module = GPT(
         vocab_size=50257,
         num_layers=11,
@@ -67,9 +69,12 @@ def main():
         model_dim=768,
         max_seq_len=args.val_batch_size // (grad_accum_steps * world_size)
     ).cuda()
+
+    # 2. Passage en bfloat16 pour tout le réseau et les banques de paramètres
     for m in model.modules():
         if isinstance(m, (nn.Embedding, nn.Linear)):
             m.weight.data = m.weight.data.bfloat16()
+
     model.attn_gate_bank.data = model.attn_gate_bank.data.bfloat16()
     model.ve_gate_bank.data = model.ve_gate_bank.data.bfloat16()
     model.qk_bank.data = model.qk_bank.data.bfloat16()
@@ -78,14 +83,22 @@ def main():
     model.mudd_w1.data = model.mudd_w1.data.bfloat16()
     model.mudd_w2.data = model.mudd_w2.data.bfloat16()
     model.mudd_b2.data = model.mudd_b2.data.bfloat16()
-    for param in model.parameters():
-        dist.broadcast(param.detach(), 0)
-    dist.broadcast(model.bigram_sign_table, 0)  # buffer, not in parameters()
+
+    # 3. FIX MONO-GPU : On n'exécute la synchronisation broadcast QUE si on est en Multi-GPU
+    if dist.is_initialized() and world_size > 1:
+        for param in model.parameters():
+            dist.broadcast(param.detach(), 0)
+        dist.broadcast(model.bigram_sign_table, 0)
+
+    # 4. Quantification FP8 des MLP (Avant compilation)
     model.quantize_mlp_fp8()
 
-    model: nn.Module = torch.compile(model, dynamic=False, fullgraph=True)
-    training_manager = TrainingManager(model)
+    # 5. FIX COMPILE : mode="max-autotune" sans fullgraph pour Ada Lovelace (sm_89)
+    print0("Compilation PyTorch Inductor (max-autotune sans CUDAGraphs)...")
+    model: nn.Module = torch.compile(model, mode="max-autotune-no-cudagraphs", dynamic=False)
 
+    # 6. Lancement du Training Manager
+    training_manager = TrainingManager(model)
 
     ########################################
     #            Warmup kernels            #
@@ -102,6 +115,7 @@ def main():
     warmup_steps = sorted({0, 1} | {s + offset for s in transition_steps for offset in [-2, -1, 0, 1] if s + offset >= 2})
     print0(f"Sampling steps {warmup_steps} for warmup", console=True)
     for step in warmup_steps:
+        torch.compiler.cudagraph_mark_step_begin()
         training_manager.advance_schedule(step)
         model.eval()
         with torch.no_grad():
@@ -199,6 +213,7 @@ def main():
     # begin training
     train_steps = training_schedule.total_steps
     for step in range(start_step, train_steps + 1):
+        training_manager.advance_schedule(step)
         last_step = (step == train_steps)
         training_manager.advance_schedule(step)
         # --------------- VALIDATION SECTION -----------------

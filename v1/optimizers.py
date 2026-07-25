@@ -106,7 +106,7 @@ def polar_express(grad_chunk: torch.Tensor, momentum_buffer: torch.Tensor, momen
 # Sparse Comms for bigram embedding gradient reduce-scatter
 def _sparse_comms_active():
     # we count on this in order for sparse communication to be worthwhile
-    return world_size == 8 and grad_accum_steps == 1
+    return world_size == 1 and grad_accum_steps == 8
 
 @torch.no_grad
 def sparse_comms_start(idxes_np, N, rank, world, send_idxes_buffer):

@@ -28,7 +28,7 @@ os.environ.setdefault("LOCAL_RANK", "0")
 os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
 os.environ.setdefault("MASTER_PORT", "29777")
 
-SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "train_gpt.py")
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "v1/train_gpt.py")
 
 with open(SRC) as f:
     src = f.read()

@@ -8,9 +8,8 @@ torch.empty(
     1, device=f"cuda:{os.environ['LOCAL_RANK']}", requires_grad=True
 ).backward()  # prevents a bug on some systems
 
-rank = int(os.environ["RANK"])
-world_size = int(os.environ["WORLD_SIZE"])
-assert 8 % world_size == 0, "world_size must be a divisor of 8"
+rank = 0
+world_size = 1
 
 grad_accum_steps = int(os.environ.get("GRAD_ACCUM_STEPS", "64")) // world_size
 grad_scale = 1 / grad_accum_steps # consistent grad magnitudes between different num_devices

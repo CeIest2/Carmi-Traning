@@ -35,13 +35,20 @@ from triton_kernels import FusedLinearReLUSquareFunction, FusedSoftcappedCrossEn
 # réécrire à la main) et 100% traçable par Dynamo en fullgraph. torch.compile/Inductor
 # fusionne de toute façon les opérations élément-par-élément en un kernel Triton généré
 # automatiquement, donc la perte de perf reste limitée.
-def ReLUSqrdMLP(x, W1, W2, W1_f8=None, dequant_scale=None, x_f8=None):
-    x_flat = x.view(-1, x.shape[-1])
-    pre = x_flat @ W1.T
-    post = torch.relu(pre)
-    post = post * post
-    out = post @ W2
-    return out.view(x.shape)
+def ReLUSqrdMLP(x, *mlp_args):
+    w1, w2 = mlp_args[0], mlp_args[1]
+    
+    # 1. Première projection (x: [B, T, 768] @ w1.T: [768, 3072] -> h: [B, T, 3072])
+    h = F.linear(x, w1)
+    
+    # 2. Activation ReLU^2
+    h = F.relu(h).square()
+    
+    # 3. Seconde projection (h: [B, T, 3072] @ w2: [3072, 768] -> out: [B, T, 768])
+    # On utilise @ car w2 est déjà dans la bonne orientation (in_dim, out_dim)
+    out = h @ w2
+    
+    return out
 
 dynamo.config.recompile_limit = 64
 
@@ -174,38 +181,40 @@ class CausalSelfAttention(nn.Module):
         self.hdim = num_heads * head_dim
         self.paired = paired
         assert self.hdim == self.dim, "num_heads * head_dim must equal model_dim"
-        # Weights are stored in parameter banks and passed via forward()
 
     def forward(self, x: Tensor, attn_args: AttnArgs, qkvo_w: Tensor):
         B, T = x.size(0), x.size(1) # batch size, sequence length
         assert B == 1, "varlen sequences requires B == 1"
         assert T % 16 == 0
-        # unpack attention args
+
+        # Unpack attention args
         aux_v, attn_gate_w = attn_args.aux_v, attn_args.attn_gate_w
         sa_lambdas, key_offset = attn_args.sa_lambdas, attn_args.key_offset
         seqlens, bm_size = attn_args.seqlens, attn_args.bm_size
         train_max_seq_len, yarn = attn_args.train_max_seq_len, attn_args.yarn
 
-        q, k, v = F.linear(x, sa_lambdas[0] * qkvo_w[:self.dim * 3].type_as(x)).view(B, T, 3 * self.num_heads, self.head_dim).chunk(3, dim=-2)
-        max_len = train_max_seq_len if self.training else (args.val_batch_size // (grad_accum_steps * world_size))
+        # FIX 1 : Séparation propre de Q, K, V via unbind(2) pour éviter les problèmes de stride sur FA2
+        q, k, v = F.linear(
+            x, sa_lambdas[0] * qkvo_w[:self.dim * 3].type_as(x)
+        ).view(B, T, 3, self.num_heads, self.head_dim).unbind(2)
 
-        q, k = norm(q), norm(k) # QK norm @Grad62304977
+        # FIX 2 : Calcul de max_len autonome (sans dépendance à args / world_size)
+        max_len = train_max_seq_len if self.training else T
+
+        q, k = norm(q), norm(k) # QK norm
 
         if not self.paired:
             q, k = yarn.rotary(q), yarn.rotary(k)
 
             if key_offset:
-                # shift keys forward for the stationary head dims. Enables 1-layer induction.
+                # Shift keys forward for the stationary head dims. Enables 1-layer induction.
                 k[:, 1:, :, self.head_dim // 2:] = k[:, :-1, :, self.head_dim // 2:]
 
             if aux_v is not None:
                 v = v + aux_v.view_as(v)
 
         else:
-            # Paired heads: adjacent heads' queries attend to each other's keys.
-            # Two copies of the input stream are interleaved to achieve this, which:
-            # - doubles the length of each sequence
-            # - halves the effective window size
+            # Paired heads logic
             q = q.view(B, T, self.num_heads // 2, self.head_dim * 2)
             k = k.view(B, T, self.num_heads // 2, self.head_dim * 2)
             v = v.reshape(B, T * 2, self.num_heads // 2, self.head_dim)
@@ -221,22 +230,30 @@ class CausalSelfAttention(nn.Module):
             seqlens = 2 * seqlens
             max_len = 2 * max_len
 
-        # use flash_attn over flex_attn @varunneal. flash_attn_varlen suggested by @YouJiacheng
-        # PATCH: flash-attn 2 (Ada-compatible) instead of flash-attn 3 (Hopper-only)
-        y = flash_attn_varlen_func(q[0], k[0], v[0], cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
-                                    max_seqlen_q=max_len, max_seqlen_k=max_len,
-                                    causal=True, softmax_scale=yarn.attn_scale, window_size=(bm_size, 0))
+        # FIX 3 : Conversion propre du window_size pour FlashAttention-2
+        ws = (bm_size, 0) if (bm_size > 0 and bm_size < max_len) else (-1, -1)
+
+        # Exécution de FlashAttention-2
+        y = flash_attn_varlen_func(
+            q[0], k[0], v[0], 
+            cu_seqlens_q=seqlens, cu_seqlens_k=seqlens,
+            max_seqlen_q=max_len, max_seqlen_k=max_len,
+            causal=True, softmax_scale=yarn.attn_scale, 
+            window_size=ws
+        )
         y = y.view(B, T, self.num_heads, self.head_dim)
-        # Gated XSA (arXiv:2603.09078) with learnable strength: subtract per-head fraction tanh(α)
-        # of y aligned with v̂. Non-paired only (v shape doesn't line up for paired layers).
+
+        # Gated XSA
         if attn_args.xsa_alpha is not None and not self.paired:
             vn = F.normalize(v, dim=-1, eps=1e-4)
             proj = (y * vn).sum(-1, keepdim=True)
             alpha = torch.tanh(attn_args.xsa_alpha).type_as(y).view(1, 1, self.num_heads, 1)
             y = y - alpha * proj * vn
+
         y = y * torch.sigmoid(F.linear(x[..., :12], attn_gate_w)).view(B, T, self.num_heads, 1)
-        y = y.contiguous().view(B, T, self.num_heads * self.head_dim) # re-assemble all head outputs side by side
-        y = F.linear(y, sa_lambdas[1] * qkvo_w[self.dim * 3:].type_as(y))  # sa_lambdas[1] pre-multiplied to O @shenberg
+        y = y.contiguous().view(B, T, self.num_heads * self.head_dim)
+        y = F.linear(y, sa_lambdas[1] * qkvo_w[self.dim * 3:].type_as(y))
+        
         return y
 
 
@@ -464,7 +481,7 @@ class GPT(nn.Module):
             mlp_up_proj_scales = [self._mlp_up_proj_scales[i:i+1] for i in range(12)]
 
         # ---- Unbind parameters (avoid select_backward kernels) ----
-        sa_lambdas = self.scalars[: 2 * self.num_layers].view(-1, 2)
+        sa_lambdas = self.scalars[: 2 * self.num_layers].clone().view(-1, 2)
         smear_lambda = self.scalars[2 * self.num_layers]
         skip_lambda = self.scalars[2 * self.num_layers + 1]
         resid_lambdas_attn = self.resid_lambdas[:, 0].bfloat16().unbind(0)
