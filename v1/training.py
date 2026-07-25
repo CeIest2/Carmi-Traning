@@ -74,7 +74,7 @@ class TrainingManager():
 
         normuon_defaults = dict(
             lr=0.006,
-            momentum=0.95,
+            momentum=0.92,
             beta2=0.9,
             weight_decay=0.3,
         )

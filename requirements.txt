@@ -8,5 +8,6 @@ typing-extensions==4.15.0
 datasets
 tiktoken==0.13.0
 safetensors==0.8.0
-
-
+peft==0.19.1
+accelerate==1.14.0
+transformers==5.14.1

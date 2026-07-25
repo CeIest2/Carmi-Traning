@@ -16,11 +16,11 @@ class Hyperparameters:
     data_path = os.environ.get("DATA_PATH", ".")
     train_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_train_*.bin") # input .bin to train on
     val_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_val_*.bin") # input .bin to eval validation loss on
-    val_tokens: int = 10485760 
+    val_tokens: int = 262144
     val_batch_size = 16 * 2048
     # schedule
-    num_scheduled_iterations: int = 1380  # number of steps to complete lr and ws schedule
-    num_extension_iterations: int = 10000  # number of steps to continue training at final lr and ws
+    num_scheduled_iterations: int = 5000
+    num_extension_iterations: int = 20000
     # evaluation and logging
     run_id: str = f"{uuid.uuid4()}"
     # Descriptive run_id for this iteration:
@@ -29,13 +29,13 @@ class Hyperparameters:
     #   - backout_lambda fully removed (slot dropped from self.scalars; absorbed into MUDD bias init)
     val_loss_every: int = 100  
     save_checkpoint: bool = True
-    run_evals: bool = False  # run additional evaluations after training is completed
+    run_evals: bool = False 
     ckpt_every: int = int(os.environ.get("CKPT_EVERY", "250"))
     ckpt_path: str = os.environ.get("CKPT_PATH", "logs/ckpt_latest.pt")
     resume_path: str = os.environ.get("RESUME_CKPT", "")
     bigram_vocab_size: int = 50304 * 15
     bigram_dim: int = 192
-    bigram_sign_table_rows: int = 8192  # prefer a power of 2 (values ~500-15000 gave similar results)
+    bigram_sign_table_rows: int = 8192 
 
 args = Hyperparameters()
 
@@ -106,21 +106,19 @@ class TrainingSchedule:
 
 # window_sizes are in units of `block_size` tokens (defined in TrainingManager)
 TRAINING_STAGES = [
-    TrainingStage(duration=1/3, train_max_seq_len=896,  batch_size=8 * 2048,  window_sizes=(1, 3),  lr_mul=1.0,
-                  mtp_weights_start=[1.0, 0.5, 0.25], mtp_weights_end=[1.0, 0.5, 0.0]),
-    TrainingStage(duration=1/3, train_max_seq_len=2048, batch_size=16 * 2048, window_sizes=(3, 7),  lr_mul=1.52,
+    TrainingStage(duration=0.4, train_max_seq_len=2048, batch_size=16 * 2048, window_sizes=(3, 7),  lr_mul=1.0,
                   mtp_weights_start=[1.0, 0.5], mtp_weights_end=[1.0, 0.0]),
-    TrainingStage(duration=1/3, train_max_seq_len=2048, batch_size=24 * 2048, window_sizes=(5, 11), lr_mul=1.73,
+    TrainingStage(duration=0.3, train_max_seq_len=2048, batch_size=24 * 2048, window_sizes=(5, 11), lr_mul=1.0,
+                  mtp_weights_start=[1.0], mtp_weights_end=[1.0]),
+    TrainingStage(duration=0.3, train_max_seq_len=2048, batch_size=24 * 2048, window_sizes=(6, 13), lr_mul=1.0,
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0]),
     TrainingStage(train_max_seq_len=2048, batch_size=24 * 2048, window_sizes=(6, 13), lr_mul=1.0,
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0]),
 ]
-
 # TODO - Confirm.
-training_schedule = TrainingSchedule(TRAINING_STAGES, args.num_scheduled_iterations, args.num_extension_iterations, cooldown_frac=0.60)
-#training_schedule = TrainingSchedule(TRAINING_STAGES, args.num_scheduled_iterations, args.num_extension_iterations, cooldown_frac=0.55)
+training_schedule = TrainingSchedule(TRAINING_STAGES, args.num_scheduled_iterations, args.num_extension_iterations, cooldown_frac=0.50)
 
-def get_muon_momentum(step: int, muon_warmup_steps=300, muon_cooldown_steps=50, momentum_min=0.85, momentum_max=0.95):
+def get_muon_momentum(step: int, muon_warmup_steps=500, muon_cooldown_steps=100, momentum_min=0.88, momentum_max=0.95):
     # warmup phase: linearly increase momentum from min to max
     # cooldown phase: linearly decrease momentum from max to min
     momentum_cd_start = training_schedule.total_steps - muon_cooldown_steps
