@@ -61,13 +61,20 @@ def main():
     print0("="*100)
 
     # 1. Initialisation du modèle (world_size = 1)
+    _val_seq_len = args.val_batch_size // (grad_accum_steps * world_size)
+    _train_seq_len = max(s.train_max_seq_len for s in TRAINING_STAGES)
+    max_seq_len = max(
+        args.val_batch_size // (grad_accum_steps * world_size),
+        max(s.train_max_seq_len for s in TRAINING_STAGES) * 2
+    )
+    
     model: nn.Module = GPT(
         vocab_size=50257,
         num_layers=11,
         num_heads=6,
         head_dim=128,
         model_dim=768,
-        max_seq_len=args.val_batch_size // (grad_accum_steps * world_size)
+        max_seq_len=max_seq_len
     ).cuda()
 
     # 2. Passage en bfloat16 pour tout le réseau et les banques de paramètres
@@ -95,7 +102,7 @@ def main():
 
     # 5. FIX COMPILE : mode="max-autotune" sans fullgraph pour Ada Lovelace (sm_89)
     print0("Compilation PyTorch Inductor (max-autotune sans CUDAGraphs)...")
-    model: nn.Module = torch.compile(model, mode="max-autotune-no-cudagraphs", dynamic=False)
+    model: nn.Module = torch.compile(model, mode="default", dynamic=False)
 
     # 6. Lancement du Training Manager
     training_manager = TrainingManager(model)

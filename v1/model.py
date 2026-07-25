@@ -89,11 +89,9 @@ class Yarn(nn.Module):
         self.reset()
 
     def rotary(self, x_BTHD):
-        assert self.factor1.size(0) >= x_BTHD.size(-3)
-        factor1, factor2 = (
-            self.factor1[None, : x_BTHD.size(-3), None, :],
-            self.factor2[None, : x_BTHD.size(-3), None, :],
-        )
+        T = x_BTHD.size(-3)
+        factor1 = self.factor1[None, :T, None, :]
+        factor2 = self.factor2[None, :T, None, :]
         x_flip = x_BTHD.view(*x_BTHD.shape[:-1], x_BTHD.shape[-1] // 2, 2).flip(-1).view(x_BTHD.shape)
         return factor1 * x_BTHD + factor2 * x_flip
 

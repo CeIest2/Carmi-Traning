@@ -17,7 +17,7 @@ class Hyperparameters:
     train_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_train_*.bin") # input .bin to train on
     val_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_val_*.bin") # input .bin to eval validation loss on
     val_tokens: int = 10485760 
-    val_batch_size: int = 32768
+    val_batch_size = 16 * 2048
     # schedule
     num_scheduled_iterations: int = 1380  # number of steps to complete lr and ws schedule
     num_extension_iterations: int = 10000  # number of steps to continue training at final lr and ws
@@ -106,14 +106,13 @@ class TrainingSchedule:
 
 # window_sizes are in units of `block_size` tokens (defined in TrainingManager)
 TRAINING_STAGES = [
-    TrainingStage(duration=1/3, train_max_seq_len=896, batch_size=8 * 2048 * 8, window_sizes=(1, 3), lr_mul=1.0,
+    TrainingStage(duration=1/3, train_max_seq_len=896,  batch_size=8 * 2048,  window_sizes=(1, 3),  lr_mul=1.0,
                   mtp_weights_start=[1.0, 0.5, 0.25], mtp_weights_end=[1.0, 0.5, 0.0]),
-    TrainingStage(duration=1/3, train_max_seq_len=2048, batch_size=16 * 2048 * 8, window_sizes=(3, 7), lr_mul=1.52,  # (16/8)**0.6
+    TrainingStage(duration=1/3, train_max_seq_len=2048, batch_size=16 * 2048, window_sizes=(3, 7),  lr_mul=1.52,
                   mtp_weights_start=[1.0, 0.5], mtp_weights_end=[1.0, 0.0]),
-    TrainingStage(duration=1/3, train_max_seq_len=2048, batch_size=24 * 2048 * 8, window_sizes=(5, 11), lr_mul=1.73,  # (24/8)**0.5
+    TrainingStage(duration=1/3, train_max_seq_len=2048, batch_size=24 * 2048, window_sizes=(5, 11), lr_mul=1.73,
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0]),
-    # extension stage
-    TrainingStage(train_max_seq_len=2048, batch_size=24 * 2048 * 8, window_sizes=(6, 13), lr_mul=1.0,  # lr_mul is not used
+    TrainingStage(train_max_seq_len=2048, batch_size=24 * 2048, window_sizes=(6, 13), lr_mul=1.0,
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0]),
 ]
 
