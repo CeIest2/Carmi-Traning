@@ -67,16 +67,16 @@ class TrainingManager():
         ]
 
         adam_defaults = dict(
-            lr=0.003,
+            lr=0.0015,
             eps=1e-8,
             weight_decay=0.005,
         )
 
         normuon_defaults = dict(
-            lr=0.012,
+            lr=0.006,
             momentum=0.95,
             beta2=0.9,
-            weight_decay=0.6,
+            weight_decay=0.3,
         )
 
         self.optimizer = NorMuonAndAdam(
@@ -136,12 +136,16 @@ class TrainingManager():
         do_adam = self._is_adam_step(step)
 
         # Update learning rates and momentum for all params
+        freeze_lambdas = step < 100
+
         for param, p_cfg in self.optimizer.param_cfgs.items():
             p_cfg.lr = p_cfg.initial_lr * step_lr
             if p_cfg.optim == "normuon":
                 p_cfg.momentum = muon_momentum
+            
+            if freeze_lambdas and p_cfg.label in ("resid_lambdas", "post_lambdas"):
+                p_cfg.lr = 0.0
 
-        # Step optimizer with do_adam flag
         self.optimizer.step(do_adam=do_adam)
 
         # At split step: copy lm_head optimizer state to embed and mark as split

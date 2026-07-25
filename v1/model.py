@@ -473,14 +473,22 @@ class GPT(nn.Module):
         sa_lambdas = self.scalars[: 2 * self.num_layers].clone().view(-1, 2)
         smear_lambda = self.scalars[2 * self.num_layers]
         skip_lambda = self.scalars[2 * self.num_layers + 1]
-        _resid_attn = self.resid_lambdas[:, 0].clamp(0.9, 1.05)
-        _resid_mlp  = self.resid_lambdas[:, 1].clamp(0.9, 1.05)
-        resid_lambdas_attn = _resid_attn.bfloat16().unbind(0)
-        resid_lambdas_mlp  = _resid_mlp.bfloat16().unbind(0)
-        post_lambdas_attn = self.post_lambdas[:, 0].bfloat16().unbind(0)
-        post_lambdas_mlp  = self.post_lambdas[:, 1].bfloat16().unbind(0)
-        x0_lambdas = self.x0_lambdas.bfloat16().unbind(0)
-        bigram_lambdas = self.bigram_lambdas.bfloat16().unbind(0)
+        
+        # CLAMP Tous les lambdas dynamiques (sécurité 4060 Ti / petit batch)
+        _resid = self.resid_lambdas.clamp(0.9, 1.05)
+        _post  = self.post_lambdas.clamp(0.5, 1.1)
+        _x0    = self.x0_lambdas.clamp(-0.5, 0.5)
+        _bigram = self.bigram_lambdas.clamp(0.0, 0.2)
+        
+        resid_lambdas_attn = _resid[:, 0].bfloat16().unbind(0)
+        resid_lambdas_mlp  = _resid[:, 1].bfloat16().unbind(0)
+        post_lambdas_attn = _post[:, 0].bfloat16().unbind(0)
+        post_lambdas_mlp  = _post[:, 1].bfloat16().unbind(0)
+        x0_lambdas = _x0.bfloat16().unbind(0)
+        bigram_lambdas = _bigram.bfloat16().unbind(0)
+
+
+
         ag = self.attn_gate_bank.unbind(0)
         veg = self.ve_gate_bank.unbind(0)
         attn_gates = [*ag[:6], None, *ag[6:]]

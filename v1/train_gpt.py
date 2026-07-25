@@ -137,6 +137,8 @@ def main():
             training_manager.sparse_index_share(step)
             loss.backward()
             del loss
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
         training_manager.step_optimizers(step)
         model.quantize_mlp_fp8()
     print0("Resetting Model", console=True)
