@@ -468,10 +468,10 @@ class GPT(nn.Module):
         skip_lambda = self.scalars[2 * self.num_layers + 1]
         
         # CLAMP Tous les lambdas dynamiques (sécurité 4060 Ti / petit batch)
-        _resid = self.resid_lambdas.clamp(0.9, 1.05)
-        _post  = self.post_lambdas.clamp(0.5, 1.1)
-        _x0    = self.x0_lambdas.clamp(-0.5, 0.5)
-        _bigram = self.bigram_lambdas.clamp(0.0, 0.2)
+        _resid = self.resid_lambdas.clamp(0.8, 1.15)
+        _post  = self.post_lambdas.clamp(0.3, 1.3)
+        _x0    = self.x0_lambdas.clamp(-1.0, 1.0)
+        _bigram = self.bigram_lambdas.clamp(-0.1, 0.3)
         
         resid_lambdas_attn = _resid[:, 0].bfloat16().unbind(0)
         resid_lambdas_mlp  = _resid[:, 1].bfloat16().unbind(0)

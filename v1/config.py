@@ -20,14 +20,14 @@ class Hyperparameters:
     val_batch_size = 16 * 2048
     # schedule
     num_scheduled_iterations: int = 100000
-    num_extension_iterations: int = 100000
+    num_extension_iterations: int = 20000
     # evaluation and logging
     run_id: str = f"{uuid.uuid4()}"
     # Descriptive run_id for this iteration:
     #   - explicit sparse connectivity refactor (no generic loop)
     #   - (1 + m_r9) * x self-reference fuse on layer 9
     #   - backout_lambda fully removed (slot dropped from self.scalars; absorbed into MUDD bias init)
-    val_loss_every: int = 100  
+    val_loss_every: int = 500  
     save_checkpoint: bool = True
     run_evals: bool = False 
     ckpt_every: int = int(os.environ.get("CKPT_EVERY", "1000"))
@@ -120,7 +120,7 @@ training_schedule = TrainingSchedule(
     TRAINING_STAGES, 
     args.num_scheduled_iterations, 
     args.num_extension_iterations, 
-    cooldown_frac=0.20,
+    cooldown_frac=0.15,
 )
 def get_muon_momentum(step: int, muon_warmup_steps=500, muon_cooldown_steps=100, momentum_min=0.88, momentum_max=0.95):
     # warmup phase: linearly increase momentum from min to max

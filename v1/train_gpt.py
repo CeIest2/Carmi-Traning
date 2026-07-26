@@ -138,7 +138,7 @@ def main():
             loss.backward()
             del loss
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=3.0)
         training_manager.step_optimizers(step)
         model.quantize_mlp_fp8()
     print0("Resetting Model", console=True)
@@ -282,7 +282,7 @@ def main():
             del loss
 
         # FIX CRITIQUE : gradient clipping a chaque step dans la boucle principale
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.5)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.5)
 
         training_manager.step_optimizers(step)
         model.quantize_mlp_fp8()
