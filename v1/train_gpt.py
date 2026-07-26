@@ -224,7 +224,6 @@ def main():
     for step in range(start_step, train_steps + 1):
         training_manager.advance_schedule(step)
         last_step = (step == train_steps)
-        training_manager.advance_schedule(step)
         # --------------- VALIDATION SECTION -----------------
         if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0):
             if last_step:
@@ -281,6 +280,10 @@ def main():
 
 
             del loss
+
+        # FIX CRITIQUE : gradient clipping a chaque step dans la boucle principale
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.5)
+
         training_manager.step_optimizers(step)
         model.quantize_mlp_fp8()
 

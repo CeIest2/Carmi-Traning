@@ -14,13 +14,13 @@ import torch
 class Hyperparameters:
     # data
     data_path = os.environ.get("DATA_PATH", ".")
-    train_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_train_*.bin") # input .bin to train on
-    val_files: str = os.path.join(data_path, "data/fineweb10B/fineweb_val_*.bin") # input .bin to eval validation loss on
+    train_files: str = os.path.join(data_path, "data/finewebedu10B/finewebedu_train_*.bin") # input .bin to train on
+    val_files: str = os.path.join(data_path, "data/finewebedu10B/finewebedu_val_*.bin") # input .bin to eval validation loss on
     val_tokens: int = 262144
     val_batch_size = 16 * 2048
     # schedule
-    num_scheduled_iterations: int = 5000
-    num_extension_iterations: int = 20000
+    num_scheduled_iterations: int = 100000
+    num_extension_iterations: int = 100000
     # evaluation and logging
     run_id: str = f"{uuid.uuid4()}"
     # Descriptive run_id for this iteration:
@@ -30,7 +30,7 @@ class Hyperparameters:
     val_loss_every: int = 100  
     save_checkpoint: bool = True
     run_evals: bool = False 
-    ckpt_every: int = int(os.environ.get("CKPT_EVERY", "250"))
+    ckpt_every: int = int(os.environ.get("CKPT_EVERY", "1000"))
     ckpt_path: str = os.environ.get("CKPT_PATH", "logs/ckpt_latest.pt")
     resume_path: str = os.environ.get("RESUME_CKPT", "")
     bigram_vocab_size: int = 50304 * 15
@@ -116,8 +116,12 @@ TRAINING_STAGES = [
                   mtp_weights_start=[1.0], mtp_weights_end=[1.0]),
 ]
 # TODO - Confirm.
-training_schedule = TrainingSchedule(TRAINING_STAGES, args.num_scheduled_iterations, args.num_extension_iterations, cooldown_frac=0.50)
-
+training_schedule = TrainingSchedule(
+    TRAINING_STAGES, 
+    args.num_scheduled_iterations, 
+    args.num_extension_iterations, 
+    cooldown_frac=0.20,
+)
 def get_muon_momentum(step: int, muon_warmup_steps=500, muon_cooldown_steps=100, momentum_min=0.88, momentum_max=0.95):
     # warmup phase: linearly increase momentum from min to max
     # cooldown phase: linearly decrease momentum from max to min

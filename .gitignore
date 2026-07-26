@@ -14,6 +14,7 @@ exports/
 .DS_Store
 /venv/
 finieweb*
+finewebedu*
 /venv*
 .hf_cache
 *.npz

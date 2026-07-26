@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from dist_setup import device, grad_accum_steps, grad_scale, world_size
 from config import args
 
-# torch._inductor.config.coordinate_descent_tuning = True # we have banned this flag for new records because it causes compilation to take 30min
 import torch
 import torch._dynamo as dynamo
 import torch.distributed as dist
@@ -13,15 +12,9 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from triton_kernels import FusedSoftcappedCrossEntropy
 
-import fp8  # enregistre les custom ops nanogpt::mm_t (utilisés via torch.ops.nanogpt.mm_t)
+import fp8  
 
-# --- PATCH (RTX 4060 Ti / Ada Lovelace) ---
-# Le repo original fetch un kernel Flash-Attention 3 précompilé (Hopper/SM90 only, via
-# `kernels-community/flash-attn3`). FA3 utilise des instructions (TMA, warp specialization,
-# wgmma) qui n'existent PAS sur Ada Lovelace (SM89) : ce n'est pas juste un binaire manquant,
-# c'est une limitation matérielle. On utilise donc Flash-Attention 2 (package `flash-attn`),
-# qui supporte officiellement Ampere/Ada/Hopper et a une API quasi identique
-# (mêmes arguments cu_seqlens_q/k, max_seqlen_q/k, causal, softmax_scale, window_size).
+
 from flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 def ReLUSqrdMLP(x, *mlp_args):
@@ -464,7 +457,7 @@ class GPT(nn.Module):
         assert len(bm_sizes) == self.num_layers
         key_offset = [b==ws_long for b in bm_sizes] # apply partial key offset to long windows
         DISABLE_FP8 = False
-        use_mlp_fp8 = self.training and not os.environ.get("DISABLE_FP8", False)
+        use_mlp_fp8 = self.training and not os.environ.get("DISABLE_FP8", False) and hasattr(self, '_mlp_up_proj_f8')
         if use_mlp_fp8:
             mlp_up_proj_f8 = self._mlp_up_proj_f8.unbind(0)
             mlp_up_proj_scales = [self._mlp_up_proj_scales[i:i+1] for i in range(12)]

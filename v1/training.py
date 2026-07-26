@@ -67,13 +67,13 @@ class TrainingManager():
         ]
 
         adam_defaults = dict(
-            lr=0.0015,
+            lr=0.0010,
             eps=1e-8,
             weight_decay=0.005,
         )
 
         normuon_defaults = dict(
-            lr=0.006,
+            lr=0.004,
             momentum=0.92,
             beta2=0.9,
             weight_decay=0.3,
@@ -105,7 +105,8 @@ class TrainingManager():
         )
 
     def _is_adam_step(self, step: int):
-        """Adam params are only updated on odd steps."""
+        if world_size == 1:
+            return True
         return step % 2 == 1
 
     def get_transition_steps(self):
